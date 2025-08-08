@@ -1,0 +1,59 @@
+
+
+-- 139353c7-63da-4985-8d2f-288040dcc137 --
+[Summary Error] HTTP error: 400 Client Error: Bad Request for url: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AIzaSyB1vWEq2kn-SNb6JOkTB8l7J-sMXS46aDc
+
+-- f057c680-72d3-41ef-b167-5ad211028663 --
+[Summary Error] HTTP error: 400 Client Error: Bad Request for url: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AIzaSyB1vWEq2kn-SNb6JOkTB8l7J-sMXS46aDc
+
+-- 9c6e11f9-dfcc-43d1-bd3b-18a5483538c7 --
+[Summary Error] HTTP error: 400 Client Error: Bad Request for url: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AIzaSyB1vWEq2kn-SNb6JOkTB8l7J-sMXS46aDc
+
+-- 560851fc-00b8-41c7-a874-f20c6059d012 --
+[Summary Error] HTTP error 404: {
+  "error": {
+    "code": 404,
+    "message": "models/gemini-1.5 is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+    "status": "NOT_FOUND"
+  }
+}
+
+
+-- 9ecaa9d8-2ee9-4c96-af3c-a4f7a2625cf2 --
+[Summary Error] HTTP error 404: {
+  "error": {
+    "code": 404,
+    "message": "models/gemini-1.5 is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+    "status": "NOT_FOUND"
+  }
+}
+
+
+-- 56bcd437-2436-482e-921d-7f61f66a224c --
+[Summary Error] HTTP error 404: {
+  "error": {
+    "code": 404,
+    "message": "models/gemini-1.5 is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+    "status": "NOT_FOUND"
+  }
+}
+
+
+-- 3e2633df-9c3c-4816-8f33-0eecf981761c --
+[Summary Error] HTTP error 404: {
+  "error": {
+    "code": 404,
+    "message": "models/gemini-2.5-lite is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+    "status": "NOT_FOUND"
+  }
+}
+
+
+-- 26058fdb-bfb6-4042-9e40-bab31dd6a260 --
+[Summary Error] HTTP error 404: {
+  "error": {
+    "code": 404,
+    "message": "models/gemini-2.5-lite is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+    "status": "NOT_FOUND"
+  }
+}

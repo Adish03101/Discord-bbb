@@ -1,0 +1,16 @@
+
+
+-- 5ed5a09e-5b56-4a38-ad93-ff3d7d8fbb8f --
+[Summary Error] 400 Client Error: Bad Request for url: https://generativelanguage.googleapis.com/v1beta2/models/chat-bison-001:generateMessage?key=AIzaSyB1vWEq2kn-SNb6JOkTB8l7J-sMXS46aDc
+
+-- 77e4cc18-ddbd-49ae-968f-3bd08e6b2362 --
+[Summary Error] 400 Client Error: Bad Request for url: https://generativelanguage.googleapis.com/v1beta2/models/chat-bison-001:generateMessage?key=AIzaSyB1vWEq2kn-SNb6JOkTB8l7J-sMXS46aDc
+
+-- 9746ca8d-fca4-48aa-860f-60f1acf94def --
+[Summary Error] 400 Client Error: Bad Request for url: https://generativelanguage.googleapis.com/v1beta2/models/chat-bison-001:generateMessage?key=AIzaSyB1vWEq2kn-SNb6JOkTB8l7J-sMXS46aDc
+
+-- b9abb1f4-d3aa-45dc-8483-fe13cb34fabc --
+[Summary Error] 400 Client Error: Bad Request for url: https://generativelanguage.googleapis.com/v1beta2/models/chat-bison-001:generateMessage?key=AIzaSyB1vWEq2kn-SNb6JOkTB8l7J-sMXS46aDc
+
+-- d82f12a0-c70d-49d8-b25e-f10a598cd5a9 --
+[Summary Error] HTTP error: 400 Client Error: Bad Request for url: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AIzaSyB1vWEq2kn-SNb6JOkTB8l7J-sMXS46aDc

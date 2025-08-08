@@ -1,32 +1,30 @@
 import os
 import uuid
-import asyncio
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, List
 from zoneinfo import ZoneInfo
+import discord
+from discord import TextChannel
+import aiohttp
 import logging
 from dotenv import load_dotenv
 from slugify import slugify
-import discord
-from discord import TextChannel, Thread
-from typing import Optional
-import traceback
-
-# Ensure project-root/src is on sys.path
 import sys
+
+
+# project-root/src should already be on sys.path; adjust if needed
 sys.path.append("/home/black/Backup/Discord-bbb/project-root/src")
 
 from llm_actions.summarization import get_summarizer
-from llm_actions.rag import ingest_documents, rag_generate
-from core.pg_db import get_pool, upsert_document
+from core.pg_db import get_pool, upsert_document  # PostgreSQL helpers
 
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('discord_bot_debug.log'),
-        logging.StreamHandler()
+        logging.StreamHandler()  # This will also print to console
     ]
 )
 logger = logging.getLogger(__name__)
@@ -44,7 +42,7 @@ summarizer = get_summarizer()
 intents = discord.Intents.default()
 intents.guilds = True
 intents.messages = True
-intents.message_content = True
+intents.message_content = True  # Add this for message content access
 bot = discord.Bot(intents=intents)
 
 # ─── Hierarchy Configuration ────────────────────────────────────────────────────
@@ -65,8 +63,10 @@ async def update_document_summary(pool, doc_id: str, summary: str):
         )
 
 # ─── Helpers ────────────────────────────────────────────────────────────────────
+
 def parse_channel_name(name: str):
-    parts = name.lower().strip().split("-", 2)
+    name = name.lower().strip()
+    parts = name.split("-", 2)
     level = parts[0]
 
     if level == LEAF_THREAD_LEVEL:
@@ -79,139 +79,110 @@ def parse_channel_name(name: str):
 
     if level == HIERARCHY[0]:  # project
         if len(parts) != 2:
-            raise ValueError(f"Bad project format: {name}")
+            raise ValueError(f"Bad {level} format: {name}")
         return level, parts[1], None
 
-    # subproject
     if len(parts) == 3:
         _, parent_slug, own_slug = parts
         return level, own_slug, parent_slug
 
-    raise ValueError(f"Bad channel format: {name}")
+    raise ValueError(f"Bad name format: {name}")
 
-def build_base_path(level: str, own_slug: str, subproject_slug: Optional[str] = None, project_slug: Optional[str] = None):
+
+def build_base_path(level: str, own_slug: str, parent_base):
     if level == "project":
         return DATA_DIR / "projects" / own_slug
     if level == "subproject":
-        return DATA_DIR / "projects" / project_slug / "subprojects" / own_slug
+        return DATA_DIR / "projects" / parent_base / "subprojects" / own_slug
     if level == LEAF_THREAD_LEVEL:
-        return DATA_DIR / "projects" / project_slug / "subprojects" / subproject_slug / "tasks" / own_slug
+        return DATA_DIR / "projects" / parent_base / "tasks" / own_slug
     return DATA_DIR / own_slug
+
 
 async def ensure_channel_context(channel_id: str, channel_name: str, guild: discord.Guild):
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT document_id, ancestors, path FROM channels WHERE channel_id = $1",
+            "SELECT document_id, ancestors, path FROM channels WHERE channel_id=$1",
             channel_id
         )
-        if row:
-            return {
-                "root_id": str(row["document_id"]),
-                "ancestors": [str(a) for a in (row["ancestors"] or [])],
-                "base_path": Path(row["path"]),
-            }
+    if row:
+        return {
+            "parent_id": str(row["document_id"]),  # Ensure string
+            "ancestors": [str(ancestor) for ancestor in (row["ancestors"] or [])],  # Ensure all strings
+            "base_path": Path(row["path"]),
+        }
 
-        channel_obj = guild.get_channel(int(channel_id))
-        # Thread inherits parent context
-        if isinstance(channel_obj, Thread):
-            parent = channel_obj.parent
-            if not isinstance(parent, TextChannel):
-                raise RuntimeError(f"Thread parent not a TextChannel: {parent}")
-            return await ensure_channel_context(str(parent.id), parent.name, guild)
+    level, own_slug, parent_slug = parse_channel_name(channel_name)
+    parent_id, ancestors, parent_base = None, [], None
 
-        # Auto-register project/subproject
-        level, own_slug, parent_slug = parse_channel_name(channel_name)
-        if level == "project":
-            ancestors = []
-            parent_id = None
-            base = build_base_path(level, own_slug)
+    if level == LEAF_THREAD_LEVEL:
+        thread = guild.get_channel(int(channel_id))
+        parent_chan = thread.parent
+        if not isinstance(parent_chan, TextChannel):
+            raise RuntimeError(f"Thread parent not a TextChannel: {parent_chan}")
+        parent_ctx = await ensure_channel_context(
+            str(parent_chan.id), parent_chan.name, guild
+        )
+        parent_id = str(parent_ctx["parent_id"])  # Ensure string
+        ancestors = parent_ctx["ancestors"] + [parent_id]
+        parent_base = parent_ctx["base_path"].relative_to(DATA_DIR / "projects")
+
+    elif parent_slug:
+        idx = HIERARCHY.index(level)
+        if idx == 0:
+            parent_id, ancestors, parent_base = None, [], None
         else:
-            # subproject
-            project_slug = parent_slug
-            parent_name = f"project-{project_slug}"
+            parent_level = HIERARCHY[idx - 1]
+            parent_name = f"{parent_level}-{parent_slug}"
             parent_chan = next(
-                (c for c in guild.channels if isinstance(c, TextChannel) and c.name == parent_name),
+                (ch for ch in guild.channels
+                 if isinstance(ch, TextChannel) and ch.name == parent_name),
                 None
             )
             if not parent_chan:
-                raise RuntimeError(f"Could not find parent channel {parent_name}")
-            parent_ctx = await ensure_channel_context(str(parent_chan.id), parent_chan.name, guild)
-            parent_id = parent_ctx["root_id"]
-            ancestors = parent_ctx["ancestors"] + [parent_id]
-            base = build_base_path(level, own_slug, project_slug=project_slug)
-
-        base.mkdir(parents=True, exist_ok=True)
-
-        # Upsert a blank document record
-        pool = await get_pool()
-        doc = await upsert_document(
-            pool,
-            original_name=channel_name,
-            slug=f"{level}-{own_slug}",
-            parent_id=parent_id,
-            content_type=None,
-            file_bytes=None,
-            summary=None,
-            channel_id=channel_id,
-        )
-        root_id = str(doc["id"])
-
-        # Insert channel mapping (idempotent)
-        async with pool.acquire() as conn:
-            await conn.execute(
-                """
-                INSERT INTO channels(channel_id, document_id, ancestors, path, created_at, status)
-                VALUES($1,$2,$3,$4,now(), 'active')
-                ON CONFLICT (channel_id) DO NOTHING
-                """,
-                channel_id, root_id, ancestors, str(base)
+                available = [ch.name for ch in guild.channels if isinstance(ch, TextChannel)]
+                raise RuntimeError(
+                    f"Could not find parent channel {parent_name}. Available: {available}"
+                )
+            parent_ctx = await ensure_channel_context(
+                str(parent_chan.id), parent_chan.name, guild
             )
+            parent_id = str(parent_ctx["parent_id"])  # Ensure string
+            ancestors = parent_ctx["ancestors"] + [parent_id]
+            parent_base = parent_ctx["base_path"].relative_to(DATA_DIR / "projects")
 
-        return {"root_id": root_id, "ancestors": ancestors, "base_path": base}
+    base_path = build_base_path(level, own_slug, parent_base)
+    base_path.mkdir(parents=True, exist_ok=True)
+
+    doc_res = await upsert_document(
+        pool,
+        original_name=channel_name,
+        slug=f"{level}-{own_slug}",
+        parent_id=parent_id,
+        content_type=None,
+        file_bytes=None,
+        summary=None,
+        channel_id=channel_id,
+    )
+    this_doc_id = str(doc_res["id"])  # Convert UUID to string
+
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO channels (channel_id, document_id, ancestors, path) VALUES ($1,$2,$3,$4)",
+            channel_id,
+            this_doc_id,
+            ancestors,
+            str(base_path),
+        )
+
+    return {"parent_id": this_doc_id, "ancestors": ancestors, "base_path": base_path}
+
 
 async def propagate_to_ancestors(doc_id: str):
-    """Propagate document to ancestor contexts for indexing"""
     pool = await get_pool()
     async with pool.acquire() as conn:
-        # Get the channel where this document was uploaded
-        doc_row = await conn.fetchrow(
-            "SELECT channel_id FROM documents WHERE id = $1", doc_id
-        )
-        if not doc_row:
-            return
-            
-        # Get the channel's ancestors
-        channel_row = await conn.fetchrow(
-            "SELECT ancestors FROM channels WHERE channel_id = $1", doc_row["channel_id"]
-        )
-        if not channel_row:
-            return
-
-    ancestor_ids = channel_row["ancestors"] or []
-    if not ancestor_ids:
-        logger.debug(f"No ancestors for {doc_id}")
-        return
-
-    for root in ancestor_ids:
-        logger.info(f"Rebuilding index for ancestor {root}")
-        texts: List[str] = []
-        async with pool.acquire() as conn:
-            docs = await conn.fetch(
-                "SELECT file_data FROM documents WHERE parent_id::text = $1", str(root)
-            )
-        for d in docs:
-            try:
-                t = (d["file_data"] or b"").decode('utf-8', errors='ignore').strip()
-                if t:
-                    texts.append(t)
-            except:
-                pass
-        if not texts:
-            texts = ["No documents available yet."]
-        await asyncio.to_thread(ingest_documents, str(root), texts)
-        logger.info(f"✅ Index rebuilt for {root}")
-
+        pass
 async def check_db_connection():
     """Test database connection and show available tables"""
     try:
@@ -222,8 +193,8 @@ async def check_db_connection():
             
             # Check if tables exist
             tables = await conn.fetch("""
-                SELECT table_name
-                FROM information_schema.tables
+                SELECT table_name 
+                FROM information_schema.tables 
                 WHERE table_schema = 'public'
             """)
             table_names = [row['table_name'] for row in tables]
@@ -232,8 +203,8 @@ async def check_db_connection():
             # Check documents table structure
             if 'documents' in table_names:
                 columns = await conn.fetch("""
-                    SELECT column_name, data_type
-                    FROM information_schema.columns
+                    SELECT column_name, data_type 
+                    FROM information_schema.columns 
                     WHERE table_name = 'documents'
                 """)
                 logger.info(f"📄 Documents table columns: {[(col['column_name'], col['data_type']) for col in columns]}")
@@ -280,117 +251,126 @@ async def upload_and_save_debug(
     buffer: bytes,
     name: str,
     ctype: str,
+    size: int,
     chan_id: str,
     chan_name: str,
     guild: discord.Guild,
 ):
-    logger.info(f"Uploading {name} to {chan_name} ({chan_id})")
-
-    ctx = await ensure_channel_context(chan_id, chan_name, guild)
-    root_id = ctx["root_id"]
-    ancestors = ctx["ancestors"]
-    base = ctx["base_path"]
-    # figure out if this is a "task" thread upload and if it's the final deliverable
-    obj = guild.get_channel(int(chan_id))
-    is_thread = isinstance(obj, Thread)
-    is_final = False
-    thread_slug = None
-    if is_thread:
-       # thread channels should be named "task-<slug>"
-        try:
-            _, thread_slug, _ = parse_channel_name(chan_name)
-            stem = Path(name).stem.lower()
-            is_final = stem.startswith(f"final-{thread_slug.lower()}")
-        except ValueError:
-           pass
-
-    # choose where on disk to write
-    if is_thread and is_final:
-        # place under its own task folder
-        sub_slug = base.name
-        proj_slug = base.parent.parent.name
-        task_base = build_base_path(LEAF_THREAD_LEVEL, thread_slug, sub_slug, proj_slug)
-        path_dir = task_base
-    else:
-        # default: put it in the subproject folder
-        path_dir = base
-
-    local_id = str(uuid.uuid4())
-    slug = slugify(name)
-    ext = Path(name).suffix
-    filename = f"{local_id}-{slug}{ext}"
-    path_dir.mkdir(parents=True, exist_ok=True)
-    path = path_dir / filename
-    if os.getenv("DISABLE_DISK_CACHE") != "1":
-        path.write_bytes(buffer)
-
-    pool = await get_pool()
-    doc = await upsert_document(
-        pool,
-        original_name=name,
-        slug=slug,
-        parent_id=root_id,
-        content_type=ctype,
-        file_bytes=buffer,
-        summary=None,
-        channel_id=chan_id,
-    )
-    new_id = str(doc["id"])
+    logger.info(f"🚀 Starting upload_and_save for: {name}")
+    logger.info(f"📍 Channel ID: {chan_id}, Channel Name: {chan_name}")
+    logger.info(f"📦 Buffer size: {len(buffer)} bytes, Content type: {ctype}")
     
-    if ancestors:
-        async with pool.acquire() as conn:
-            await conn.execute("UPDATE documents SET ancestors=$1 WHERE id=$2", ancestors, new_id)
-
-    # ✅ CRITICAL FIX: Index document immediately in current context
     try:
-        # Extract text content for indexing
-        text_content = ""
-        if ctype and ctype.startswith("text/"):
-            text_content = buffer.decode("utf-8", errors="ignore").strip()
-        elif path.exists() and path.suffix.lower() in ['.txt', '.md', '.py', '.js', '.html', '.css', '.json', '.csv']:
-            try:
-                text_content = path.read_text(encoding='utf-8', errors="ignore").strip()
-            except:
-                text_content = buffer.decode("utf-8", errors="ignore").strip()
+        # Step 1: Get channel context
+        logger.info("📁 Getting channel context...")
+        ctx = await ensure_channel_context(chan_id, chan_name, guild)
+        logger.info(f"✅ Channel context obtained: {ctx}")
         
-        # Index in the immediate context (root_id)  
-        if text_content:
-            await asyncio.to_thread(ingest_documents, root_id, [text_content])
-            logger.info(f"✅ Indexed new document {new_id} in context {root_id}")
+        parent_id = ctx["parent_id"]
+        base_path = ctx["base_path"]
+        
+        logger.info(f"👥 Parent ID: {parent_id}")
+        logger.info(f"📂 Base path: {base_path}")
+        
+        # Step 2: Generate file info
+        doc_id = str(uuid.uuid4())
+        slug = slugify(name)
+        ext = Path(name).suffix
+        blob = f"{doc_id}-{slug}{ext}"
+        full_path = base_path / blob
+        
+        logger.info(f"🆔 Generated doc_id: {doc_id}")
+        logger.info(f"🏷️ Slug: {slug}")
+        logger.info(f"💾 Full path: {full_path}")
+        
+        # Step 3: Save to disk (if enabled)
+        if os.getenv("DISABLE_DISK_CACHE") != "1":
+            full_path.write_bytes(buffer)
+            logger.info(f"✅ File written to disk: {full_path}")
         else:
-            logger.warning(f"⚠️ No text content to index for {name}")
+            logger.info("⚠️ Disk cache disabled - skipping file write")
+
+        # Step 4: Database operations
+        logger.info("🗄️ Getting database pool...")
+        pool = await get_pool()
+        new_doc_id = None
+        
+        try:
+            logger.info("💾 Attempting to upsert document...")
+            logger.info(f"Parameters: name={name}, slug={slug}, parent_id={parent_id}, content_type={ctype}, channel_id={chan_id}")
             
-    except Exception as e:
-        logger.error(f"❌ Failed to index document {new_id}: {e}")
-        # Continue with upload even if indexing fails
-
-    # propagate only for thread uploads
-    obj = guild.get_channel(int(chan_id))
-    if isinstance(obj, Thread):
-        await propagate_to_ancestors(new_id)
-
-    # summarization
-    level = "task" if isinstance(obj, Thread) else parse_channel_name(chan_name)[0]
-    text = path.read_text(errors='ignore') if path.exists() else buffer.decode('utf-8', errors='ignore')
-    summary = summarizer.summarize(text, context=level)
-
-    (base / "summaries.txt").open("a").write(f"\n\n--{new_id}({level})--\n{summary}")
-    if summary:
-        await update_document_summary(pool, new_id, summary)
-    # if this was the final file in a task thread, also propagate its summary up
-    if is_thread and is_final and summary:
-        async with pool.acquire() as conn:
-            for anc in ancestors:
-                row = await conn.fetchrow(
-                    "SELECT path FROM channels WHERE document_id = $1", anc
+            res = await upsert_document(
+                pool,
+                original_name=name,
+                slug=slug,
+                parent_id=parent_id,
+                content_type=ctype,
+                file_bytes=buffer,
+                summary=None,
+                channel_id=chan_id,
+            )
+            
+            new_doc_id = str(res["id"])
+            logger.info(f"✅ Document upserted successfully. New doc ID: {new_doc_id}")
+            logger.info(f"📋 Upsert result: {res}")
+            
+            # Step 5: Verify the document was actually inserted
+            async with pool.acquire() as conn:
+                verify = await conn.fetchrow(
+                    "SELECT id, original_name, parent_id, channel_id FROM documents WHERE id = $1",
+                    new_doc_id
                 )
-                if row and row["path"]:
-                    anc_path = Path(row["path"])
-                    (anc_path / "summaries.txt").open("a").write(
-                        f"\n\n--{new_id}(task-final)--\n{summary}"
-                    )
-
-    return {"local_id": local_id, "document_id": new_id, "path": str(path)}
+                if verify:
+                    logger.info(f"✅ Verification successful: {dict(verify)}")
+                else:
+                    logger.error("❌ Document not found after upsert!")
+                    
+                # Check total document count
+                total_docs = await conn.fetchval("SELECT COUNT(*) FROM documents")
+                logger.info(f"📊 Total documents in DB after upsert: {total_docs}")
+                    
+        except Exception as e:
+            logger.error(f"❌ Database upsert failed: {e}")
+            logger.error(f"Error type: {type(e).__name__}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
+            raise  # Re-raise to see the full error in Discord
+        
+        # Step 6: Handle summarization (with error handling)
+        if new_doc_id:
+            try:
+                await propagate_to_ancestors(new_doc_id)
+                logger.info("✅ Ancestor propagation completed")
+            except Exception as e:
+                logger.warning(f"⚠️ Ancestor propagation failed: {e}")
+            
+            try:
+                text = full_path.read_text(errors="ignore") if full_path.exists() else buffer.decode(
+                    "utf-8", errors="ignore"
+                )
+                summary = summarizer.summarize(text, context=parse_channel_name(chan_name)[0])
+                
+                # Save summary to file
+                with open(base_path / "summaries.txt", "a") as sf:
+                    sf.write(f"\n\n-- {doc_id} --\n{summary}")
+                
+                # Update database with summary
+                if summary:
+                    await update_document_summary(pool, new_doc_id, summary)
+                    logger.info("✅ Summary generated and saved")
+                
+            except Exception as e:
+                logger.warning(f"⚠️ Summarization failed: {e}")
+                import traceback
+                logger.warning(f"Summary traceback: {traceback.format_exc()}")
+        
+        return {"local_id": doc_id, "document_id": new_doc_id, "path": str(base_path)}
+        
+    except Exception as e:
+        logger.error(f"💥 upload_and_save failed completely: {e}")
+        import traceback
+        logger.error(f"Complete failure traceback: {traceback.format_exc()}")
+        raise
 
 # ─── NEW APPROACH: Message-based file uploads ──────────────────────────────────
 @bot.event
@@ -424,6 +404,7 @@ async def on_message(message):
                 buffer,
                 attachment.filename,
                 attachment.content_type or "application/octet-stream",
+                len(buffer),
                 str(message.channel.id),
                 message.channel.name,
                 message.guild,
@@ -446,7 +427,7 @@ async def on_message(message):
                 'error': str(e)
             })
     
-    # Send batch confirmation
+    # Send batch confirmation (same as your original code)
     if successful_uploads or failed_uploads:
         local_time = datetime.now(ZoneInfo("Asia/Kolkata")).strftime(
             "%Y-%m-%d %I:%M %p %Z"
@@ -488,7 +469,7 @@ async def on_message(message):
         
         await message.reply(embed=embed)
 
-# ─── SLASH COMMANDS ─────────────────────────────────────────────────────────────
+# ─── IMPROVED SLASH COMMAND (text only to avoid ephemeral issues) ──────────────
 @bot.slash_command(name="dump", description="Save text into the vault (for files, upload and mention the bot)")
 async def dump(
     ctx: discord.ApplicationContext,
@@ -511,7 +492,7 @@ async def dump(
         ctype = "text/plain"
 
         res = await upload_and_save_debug(
-            buf, name, ctype,
+            buf, name, ctype, len(buf),
             str(ctx.channel_id), ctx.channel.name, ctx.guild
         )
 
@@ -540,61 +521,6 @@ async def dump(
             ephemeral=True
         )
 
-@bot.slash_command(name="query", description="Query documents in current context")
-async def query_docs(ctx: discord.ApplicationContext, question: str):
-    """Query documents available in the current channel context"""
-    await ctx.defer()
-    
-    try:
-        channel_id = str(ctx.channel_id)
-        pool = await get_pool()
-        
-        # Get channel context - for threads, get parent context
-        channel_obj = ctx.guild.get_channel(ctx.channel_id)
-        search_channel_id = channel_id
-        
-        # ✅ CRITICAL: For task threads, search in parent subproject context ONLY
-        if isinstance(channel_obj, discord.Thread):
-            parent_chan = channel_obj.parent
-            if isinstance(parent_chan, TextChannel):
-                search_channel_id = str(parent_chan.id)
-        
-        # Get the root_id for this context
-        async with pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT document_id FROM channels WHERE channel_id = $1",
-                search_channel_id
-            )
-        
-        if not row:
-            await ctx.followup.send("❌ Channel not registered in system.", ephemeral=True)
-            return
-        
-        root_id = str(row["document_id"])
-        
-        # Query documents using RAG
-        answer = await asyncio.to_thread(rag_generate, root_id, question, 3)
-        
-        # Format response
-        embed = discord.Embed(
-            title="🔍 Document Query Results",
-            color=0x3498db,
-            timestamp=datetime.now(timezone.utc)
-        )
-        
-        embed.add_field(name="📝 Question", value=question, inline=False)
-        embed.add_field(name="📄 Answer", value=answer[:1024], inline=False)
-        
-        if len(answer) > 1024:
-            embed.add_field(name="📄 Answer (continued)", value=answer[1024:2048], inline=False)
-        
-        embed.add_field(name="🎯 Context", value=f"Root ID: {root_id}", inline=True)
-        
-        await ctx.followup.send(embed=embed)
-        
-    except Exception as e:
-        logger.error(f"Query command error: {e}")
-        await ctx.followup.send(f"❌ Error processing query: {str(e)}", ephemeral=True)
 
 @bot.slash_command(name="dump_status", description="Show the latest stored document metadata for this channel")
 async def dump_status(ctx: discord.ApplicationContext):
@@ -640,6 +566,7 @@ async def dump_status(ctx: discord.ApplicationContext):
     embed.add_field(name="Has summary", value="yes" if row["summary"] else "no", inline=True)
     await ctx.followup.send(embed=embed)
 
+
 @bot.event
 async def on_ready():
     print(f"🤖 Logged in as {bot.user}")
@@ -649,27 +576,20 @@ async def on_ready():
     try:
         logger.info("🔍 Testing database connection...")
         await check_db_connection()
+        
         logger.info("🧪 Testing direct database operations...")
         await test_direct_db_insert()
+        
         print("✅ Database connection and operations working correctly")
         logger.info("✅ All database tests passed")
+        
     except Exception as e:
         print(f"❌ Database issues detected: {e}")
         logger.error(f"Database startup test failed: {e}")
         print("⚠️ Bot may not function correctly - check logs for details")
     
-    # Test RAG system integration
-    try:
-        from llm_actions.rag import ingest_documents as test_rag
-        print("✅ RAG system integration working")
-        logger.info("RAG system integration verified")
-    except Exception as e:
-        print(f"⚠️ RAG system integration issue: {e}")
-        logger.warning(f"RAG integration warning: {e}")
-    
     print("📁 To upload files: Upload a file and mention the bot in the same message")
     print("📝 To upload text: Use /dump command")
-    print("🔍 To query documents: Use /query command")
-    print("🎯 Context scoping: Task threads query parent subproject docs only")
+
 
 bot.run(TOKEN)

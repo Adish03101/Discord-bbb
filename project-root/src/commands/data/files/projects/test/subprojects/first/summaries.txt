@@ -1,0 +1,28 @@
+
+
+-- 1d7af0ec-ba9c-4445-8fac-7f11130ba648 --
+This is a comprehensive summary of the Discord-Based Hierarchical Context and Prompt Generation System design document. The system aims to manage knowledge, context, and prompt generation across a nested hierarchy of Client → Product → Project → Subproject → Task within Discord. The design emphasizes structured knowledge management, context-appropriate AI assistance, and knowledge reuse through insights, all integrated in the team's familiar Discord environment.
+
+The system consists of multiple bots operating at different scopes, each with a defined role, scope of knowledge, and behaviors. The bots communicate in Discord channels/threads of their scope and are designed to work together seamlessly. The system uses a metadata-driven approach to classify and store content, ensuring that information is organized and abstracted at multiple levels of granularity.
+
+The design includes a metadata schema for content ingestion, which includes fields such as id, level, client, product, project, subproject, task, person, segment, status, nuance_level, active_importance, authors, meeting_ref, linked_items, permissions, created, and updated. The system uses a vector index for semantic search, which enables the retrieval of relevant content based on context.
+
+The system also includes a retrieval strategy matrix, which outlines what context each level's bot will retrieve, how much nuance is included, and
+
+-- c05dfd7f-30ac-43f8-bf27-f3d075ecab51 --
+The document provides a comprehensive design for a hierarchical context and prompt generation system within Discord. The system aims to streamline work management and context utilization by organizing and abstracting information at multiple levels of granularity. The key features of the system include:
+
+1.  **Hierarchical Context Management:** The system organizes information in a hierarchical structure, with each level containing more abstracted information. This allows for efficient retrieval and presentation of relevant context at each level.
+2.  **Multi-Bot Architecture:** The system uses a network of bots operating at different scopes, each responsible for managing context at its respective level. This ensures that each bot "knows" the objectives and constraints of its scope and can pull in relevant context from its own vault and related levels.
+3.  **Automated Ingestion & Classification:** The system uses a metadata schema to guide classification and ingestion of new information. This ensures that new information is properly labeled and stored in the correct context.
+4.  **Task Lifecycle Management:** The system manages the lifecycle of tasks, from creation to completion, and ensures that relevant context is captured and stored at each stage.
+5.  **Integration of Personal and Shared Knowledge:** The system allows individuals to maintain personal notes and have personal AI assistance, while still contributing to shared
+
+-- 1bbfd74f-9df1-4046-b963-323551004006 --
+[Summary Error] HTTP error 404: {
+  "error": {
+    "code": 404,
+    "message": "models/gemini-2.5-lite is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+    "status": "NOT_FOUND"
+  }
+}

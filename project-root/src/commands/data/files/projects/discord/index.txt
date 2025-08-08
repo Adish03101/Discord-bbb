@@ -1,0 +1,242 @@
+Summary of Next Steps & Tests for Dump/Project/Task Bot System
+
+1. Current State (baseline)
+- dump.py has been refactored to use PostgreSQL (Postgres) for storing document metadata and embedded file blobs.
+- PostgreSQL database 'dumpdb' with user 'dumpbot' (write) and 'ragreader' (read-only) exists; schema with tables 'documents' and 'channels' created and ownership adjusted.
+- test_pg.py verifies connectivity, upsert, and retrieval from Postgres.
+- project_bot.py and task_bot.py are still using SQLite and on-disk blob_key logic; rag.py handles RAG generation with FAISS indexes; summarization.py uses Gemini for summarization.
+
+2. Immediate Validation / Testing
+2.1. Verify Database Integration
+  - Upload via /dump command in Discord to ensure dump bot is storing into Postgres.
+    * Check documents table for new entries: SELECT id, original_name, slug, file_size, channel_id FROM documents WHERE channel_id = '<channel_id>';
+    * Check channels table for mapping.
+  - Verify ragreader user can read:
+    * Connect as ragreader and run SELECT queries (read-only).
+  - Confirm dumpbot connection string is set in .env as POSTGRES_URL.
+  - Ensure test_pg.py confirms connected user is dumpbot and the returned blob matches original.
+
+2.2. Smoke Test RAG Pipeline
+  - Temporarily query existing project/subproject/task channels with project_bot and task_bot; note they still rely on SQLite. Validate retrieval logic works end-to-end for simple queries.
+  - Plan migration of project_bot/task_bot to Postgres (next section).
+
+3. Context Document & Context Window
+3.1. Goals
+  - Build a canonical context document for any channel or task thread that aggregates:
+    * Channel hierarchy (project / subproject / task).
+    * Relevant uploaded documents (summaries or content).
+    * Recent messages from the thread or channel (including embeds and attachments).
+    * Existing summaries and open questions/flags.
+
+3.2. Implementation Steps
+  - Write/build function `build_context_document(channel_id)` that:
+    * Fetches channel entry from Postgres (channels table).
+    * Collects root document and its children (summary fields or full small-text content).
+    * Grabs last N messages from Discord thread (sanitize, include content, embed titles/descriptions, attachment references).
+    * Composes structured text with header, summaries, recent messages, and optionally full doc excerpts.
+    * Returns string to feed into RAG pipeline (or to compute embedding).
+  - Cache context document per channel with invalidation triggers:
+    * New document upload under relevant root.
+    * Significant new message activity (threshold or time window).
+
+3.3. Testing
+  - Create unit/integration test that generates context doc for a known task thread and inspects its structure.
+  - Feed context doc into rag_generate via an override or as preamble to ensure retrieval uses this aggregated context.
+
+4. Migration for Multi-Level Bots (Project / Subproject / Task)
+4.1. Shared Core Module
+  - Extract common functionality into `core/`:
+    * Postgres connection pooling (`get_pool`).
+    * Channel/document resolution (ensure_channel_context).
+    * Context document builder.
+    * RAG ingestion adapter (wrap existing rag.py to accept prebuilt context).
+    * Summarization interface.
+  - Replace SQLite usage in project_bot.py and task_bot.py with Postgres equivalents:
+    * `get_project_root`, `get_channel_document_id`, ancestor resolution to query Postgres.
+    * Index building to use embedded document content or stored summaries instead of blob_key file paths.
+
+4.2. Responsibilities per Bot Level
+  - Project Bot: high-level queries about project root; orchestrates ingestion if missing; uses context doc for project-wide questions.
+  - Subproject/Task Bot: finer-grained context; builds/maintains its own index; exposes task-specific queries; summary aggregation.
+  - Consider a coordinator layer that routes queries to appropriate level based on scope (e.g., if query mentions a task-specific keyword, use task context first, fallback to project).
+
+4.3. Testing
+  - Validate that migrating queries from SQLite to Postgres returns consistent answers.
+  - Ensure backward compatibility during migration (can run both in parallel for comparison).
+
+5. Meeting Transcription (Discord)
+5.1. Objectives
+  - Capture voice conversations from Discord meetings.
+  - Convert audio to text reliably for inclusion in context documents.
+
+5.2. Candidate Approaches
+  - Use existing recording bot (Craig) to capture session audio per participant or combined.
+    * Pros: Already built, per-user audio available.
+    * Cons: May need post-processing + alignment.
+  - Build/Improve custom voice recording bot:
+    * Record raw audio streams for each speaker.
+    * Mix or keep separate tracks.
+    * Use Whisper (local or API) for transcription.
+      - Use small or medium models depending on latency/accuracy tradeoff.
+      - Apply speaker diarization heuristics if needed (timestamp alignment).
+  - Real-time or near-real-time transcription pipeline:
+    * Capture audio buffer → chunk → transcribe via Whisper → append incremental transcript into task channel.
+    * Buffering strategy to avoid excessive API load; consider on-meeting-finalize summarization.
+
+5.3. Integration
+  - Store transcripts as documents in Postgres with metadata (meeting_id, participants, timestamps).
+  - Generate summary of meeting and append to context doc.
+  - Optionally detect action items via a separate summarization/QA pass.
+
+5.4. Testing
+  - Run a dummy voice call, record it, transcribe, verify transcript accuracy, timestamp alignment, and integration into the correct task/project context.
+
+6. Validation & Observability
+- Add structured logging for:
+  * DB operations (success/failure, query durations).
+  * Context document creation and invalidation.
+  * RAG queries (which context was used, truncation).
+  * Transcription ingestion and summarization results.
+- Build simple health checks:
+  * DB connectivity.
+  * Index existence for a root.
+  * Freshness of context doc vs underlying source updates.
+
+7. Future Improvements / Stretch
+- Fine-grained access control (roles per user/bot) using Postgres roles or application layer.
+- Retrieval necessity classifier: decide when to rebuild context vs reuse cache.
+- Incremental summarization (only summarize changes in thread rather than full re-summarize).
+- Embedding versioning & drift detection.
+- Multi-modal context (include snapshots, images, diagrams).
+- Conflict resolution when multiple bots update overlapping contexts.
+
+Acceptance Criteria:
+- /dump uploads persist in Postgres and can be queried manually.
+- build_context_document returns a coherent aggregated doc for a task thread.
+- project_bot and task_bot have been refactored to use Postgres instead of SQLite (parallel comparison available).
+- Meeting audio can be recorded, transcribed, and stored as context documents with a summary.
+- Read-only RAG pipeline user (`ragreader`) can query without write privileges.
+- Tests exist for core flows: DB write/read, context doc assembly, RAG generation using context, transcription ingestion.
+
+
+
+Summary of Next Steps & Tests for Dump/Project/Task Bot System
+
+1. Current State (baseline)
+- dump.py has been refactored to use PostgreSQL (Postgres) for storing document metadata and embedded file blobs.
+- PostgreSQL database 'dumpdb' with user 'dumpbot' (write) and 'ragreader' (read-only) exists; schema with tables 'documents' and 'channels' created and ownership adjusted.
+- test_pg.py verifies connectivity, upsert, and retrieval from Postgres.
+- project_bot.py and task_bot.py are still using SQLite and on-disk blob_key logic; rag.py handles RAG generation with FAISS indexes; summarization.py uses Gemini for summarization.
+
+2. Immediate Validation / Testing
+2.1. Verify Database Integration
+  - Upload via /dump command in Discord to ensure dump bot is storing into Postgres.
+    * Check documents table for new entries: SELECT id, original_name, slug, file_size, channel_id FROM documents WHERE channel_id = '<channel_id>';
+    * Check channels table for mapping.
+  - Verify ragreader user can read:
+    * Connect as ragreader and run SELECT queries (read-only).
+  - Confirm dumpbot connection string is set in .env as POSTGRES_URL.
+  - Ensure test_pg.py confirms connected user is dumpbot and the returned blob matches original.
+
+2.2. Smoke Test RAG Pipeline
+  - Temporarily query existing project/subproject/task channels with project_bot and task_bot; note they still rely on SQLite. Validate retrieval logic works end-to-end for simple queries.
+  - Plan migration of project_bot/task_bot to Postgres (next section).
+
+3. Context Document & Context Window
+3.1. Goals
+  - Build a canonical context document for any channel or task thread that aggregates:
+    * Channel hierarchy (project / subproject / task).
+    * Relevant uploaded documents (summaries or content).
+    * Recent messages from the thread or channel (including embeds and attachments).
+    * Existing summaries and open questions/flags.
+
+3.2. Implementation Steps
+  - Write/build function `build_context_document(channel_id)` that:
+    * Fetches channel entry from Postgres (channels table).
+    * Collects root document and its children (summary fields or full small-text content).
+    * Grabs last N messages from Discord thread (sanitize, include content, embed titles/descriptions, attachment references).
+    * Composes structured text with header, summaries, recent messages, and optionally full doc excerpts.
+    * Returns string to feed into RAG pipeline (or to compute embedding).
+  - Cache context document per channel with invalidation triggers:
+    * New document upload under relevant root.
+    * Significant new message activity (threshold or time window).
+
+3.3. Testing
+  - Create unit/integration test that generates context doc for a known task thread and inspects its structure.
+  - Feed context doc into rag_generate via an override or as preamble to ensure retrieval uses this aggregated context.
+
+4. Migration for Multi-Level Bots (Project / Subproject / Task)
+4.1. Shared Core Module
+  - Extract common functionality into `core/`:
+    * Postgres connection pooling (`get_pool`).
+    * Channel/document resolution (ensure_channel_context).
+    * Context document builder.
+    * RAG ingestion adapter (wrap existing rag.py to accept prebuilt context).
+    * Summarization interface.
+  - Replace SQLite usage in project_bot.py and task_bot.py with Postgres equivalents:
+    * `get_project_root`, `get_channel_document_id`, ancestor resolution to query Postgres.
+    * Index building to use embedded document content or stored summaries instead of blob_key file paths.
+
+4.2. Responsibilities per Bot Level
+  - Project Bot: high-level queries about project root; orchestrates ingestion if missing; uses context doc for project-wide questions.
+  - Subproject/Task Bot: finer-grained context; builds/maintains its own index; exposes task-specific queries; summary aggregation.
+  - Consider a coordinator layer that routes queries to appropriate level based on scope (e.g., if query mentions a task-specific keyword, use task context first, fallback to project).
+
+4.3. Testing
+  - Validate that migrating queries from SQLite to Postgres returns consistent answers.
+  - Ensure backward compatibility during migration (can run both in parallel for comparison).
+
+5. Meeting Transcription (Discord)
+5.1. Objectives
+  - Capture voice conversations from Discord meetings.
+  - Convert audio to text reliably for inclusion in context documents.
+
+5.2. Candidate Approaches
+  - Use existing recording bot (Craig) to capture session audio per participant or combined.
+    * Pros: Already built, per-user audio available.
+    * Cons: May need post-processing + alignment.
+  - Build/Improve custom voice recording bot:
+    * Record raw audio streams for each speaker.
+    * Mix or keep separate tracks.
+    * Use Whisper (local or API) for transcription.
+      - Use small or medium models depending on latency/accuracy tradeoff.
+      - Apply speaker diarization heuristics if needed (timestamp alignment).
+  - Real-time or near-real-time transcription pipeline:
+    * Capture audio buffer → chunk → transcribe via Whisper → append incremental transcript into task channel.
+    * Buffering strategy to avoid excessive API load; consider on-meeting-finalize summarization.
+
+5.3. Integration
+  - Store transcripts as documents in Postgres with metadata (meeting_id, participants, timestamps).
+  - Generate summary of meeting and append to context doc.
+  - Optionally detect action items via a separate summarization/QA pass.
+
+5.4. Testing
+  - Run a dummy voice call, record it, transcribe, verify transcript accuracy, timestamp alignment, and integration into the correct task/project context.
+
+6. Validation & Observability
+- Add structured logging for:
+  * DB operations (success/failure, query durations).
+  * Context document creation and invalidation.
+  * RAG queries (which context was used, truncation).
+  * Transcription ingestion and summarization results.
+- Build simple health checks:
+  * DB connectivity.
+  * Index existence for a root.
+  * Freshness of context doc vs underlying source updates.
+
+7. Future Improvements / Stretch
+- Fine-grained access control (roles per user/bot) using Postgres roles or application layer.
+- Retrieval necessity classifier: decide when to rebuild context vs reuse cache.
+- Incremental summarization (only summarize changes in thread rather than full re-summarize).
+- Embedding versioning & drift detection.
+- Multi-modal context (include snapshots, images, diagrams).
+- Conflict resolution when multiple bots update overlapping contexts.
+
+Acceptance Criteria:
+- /dump uploads persist in Postgres and can be queried manually.
+- build_context_document returns a coherent aggregated doc for a task thread.
+- project_bot and task_bot have been refactored to use Postgres instead of SQLite (parallel comparison available).
+- Meeting audio can be recorded, transcribed, and stored as context documents with a summary.
+- Read-only RAG pipeline user (`ragreader`) can query without write privileges.
+- Tests exist for core flows: DB write/read, context doc assembly, RAG generation using context, transcription ingestion.
+

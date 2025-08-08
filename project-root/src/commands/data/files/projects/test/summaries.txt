@@ -1,0 +1,40 @@
+
+
+-- f39637af-15ea-4994-b816-830819f679bf --
+The provided text is a comprehensive design document for a system that aims to manage knowledge and context within a team's workflow. The system is built around a hierarchical structure, with clients, products, projects, subprojects, and tasks, and utilizes metadata-driven ingestion, vector search, and AI-assisted summarization to provide relevant context to team members.
+
+The system consists of multiple bots, each with a specific role and scope, including a Client Bot, Product Bot, Project Bot, Subproject Bot, Task Bot, and Person Bot. Each bot is designed to provide context and assistance to team members at different levels of the hierarchy.
+
+The system also includes a metadata schema, which defines the structure and fields for metadata associated with each piece of content. The metadata schema includes fields such as level, client, product, project, subproject, task, segment, status, nuance level, active importance, authors, meeting reference, and linked items.
+
+The system uses a vector search algorithm to retrieve relevant content from the knowledge base, and a retrieval strategy matrix is provided to outline the context that each bot will retrieve, how much nuance is included, and how it contributes upwards.
+
+The system also includes a design insights data model, which structures design insights (both local and global) in a
+
+-- 3c4b8954-2488-4b56-8738-b5cf51a0d7d9 --
+The provided text is a detailed design document for a knowledge management system that utilizes Discord as its primary interface. The system aims to streamline work management and context utilization by providing a hierarchical structure for storing and retrieving information. Here's a summary of the key points:
+
+1.  **System Scope and Boundaries:** The system is designed for a single organization, handling multiple clients, and is built around a hierarchical structure of Client → Product → Project → Subproject → Task. The system is not intended for multi-tenant deployment or commercial SaaS features.
+2.  **Glossary of Core Concepts:** The system defines several key terms, including hierarchy, project segments, dump bot, context vault, nuance vs. basis, active vs. passive context, short-term task context, final task artifact, upward synthesis, design insights, and person bot.
+3.  **Research Goals:** The primary goal is to design a system that streamlines work management and context utilization in a Discord-based environment. The system must achieve several objectives, including reliable ingestion and organization of information, hierarchical context maintenance, effective context retrieval for prompting, avoiding information overload, task lifecycle management, integration of personal and shared knowledge, incorporation of design insights, access control and confidentiality, and seamless Discord workflow.
+4.
+
+-- 2ac549a6-8624-46eb-96a0-95bd2cdc1e2a --
+The provided text is a comprehensive document outlining a system design for managing knowledge and context within a team using Discord. The system aims to streamline work management and context utilization, ensuring that relevant context is maximized for each task while minimizing overload.
+
+The document is divided into several sections, including:
+
+1.  **Discord-Based Hierarchical Context and Prompt Generation System**: This section provides an overview of the system, including its purpose, scope, and boundaries.
+2.  **Table of Contents**: A table of contents is provided to help navigate the document.
+3.  **Executive Summary**: A summary of the system design is provided, highlighting its key features and benefits.
+4.  **System Scope & Boundaries**: This section defines the scope and boundaries of the system, including what is included and what is out of scope.
+5.  **Glossary of Core Concepts**: A glossary of core concepts is provided to ensure that key terms are defined and understood.
+6.  **Research Goals**: The research goals of the system are outlined, including the objectives and challenges.
+7.  **Solutions by Domain**: This section addresses specific aspects of the system design, including ingestion and metadata, storage architecture, context lifecycle and state management, retrieval and context selection by level,
+
+-- c085d339-ddb8-456c-bd94-8076a297e96b --
+This document outlines a comprehensive AI-supported work environment within Discord that manages knowledge, context, and prompt generation across a nested hierarchy of Client → Product → Project → Subproject → Task. The system ingests all project-related information via a dedicated “dump” channel, automatically classifies the content using metadata, and routes it into structured context vaults scoped to each level of the hierarchy.
+
+The system consists of multiple bots operating at different scopes, each with a defined role, scope of knowledge, and behaviors. The Client Bot represents the top-level client context, providing high-level summaries and answering questions about the entire client's portfolio of work. The Product Bot focuses on a single product, knowing about all projects under that product and the state of the product itself. The Project Bot oversees a specific project, having the most holistic view of that project, including all subprojects and segments. The Subproject Bot manages the context of a specific subproject, ensuring all tasks align and sharing info between tasks. The Task Bot lives in a task thread to assist with that specific task's execution, providing relevant info on request and proactively offering help.
+
+The system uses a metadata-driven approach to ingestion, where each content item has a metadata schema that includes fields such as id, level, client, product,
